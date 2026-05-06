@@ -1,0 +1,64 @@
+---
+# Slack file-transfer endpoints — https://files.slack.com
+#
+# Slack splits large file uploads/downloads off the Web API onto a
+# separate edge host: `files.slack.com`. Two surfaces matter for
+# policy gating:
+#
+#   /upload/v1/<token>                  — second leg of the modern
+#                                         upload flow. The <token>
+#                                         was minted by the prior
+#                                         files.getUploadURLExternal
+#                                         call (declared in slack.yaml),
+#                                         so authorisation is implicit
+#                                         in the URL and a typical
+#                                         policy permits unconditionally.
+#   /files-pri/<team_id>-<file_id>/...  — private file download. The
+#                                         file id is encoded into the
+#                                         first segment alongside the
+#                                         team id; we capture the whole
+#                                         segment and split on `-` to
+#                                         recover file_id for the
+#                                         file-meta lookup.
+#
+# Cross-API meta references (`slack.file{...}`, `slack.identity{...}`)
+# point at metas defined in slack.yaml. The runtime resolves them
+# against `https://slack.com` (the slack API's base_url) regardless
+# of the inbound request's host.
+
+name: slack_files
+base_url: "https://files.slack.com"
+path_prefixes:
+- /upload/v1
+- /files-pri
+
+# Mirror slack.yaml's denial-status convention. Slack SDKs branch on
+# `body.ok` before HTTP status, so a 200-with-error keeps them happy.
+access_denied_status: 200
+
+actions:
+# ---- uploads ---------------------------------------------------------
+# files.getUploadURLExternal pre-authorised this URL via the embedded
+# token; chunk uploads here are pass-through. Bind only `slack.identity`
+# so policies that gate by workspace/user can still inspect it.
+- name: upload_file_chunk
+  method: POST
+  path: /upload/v1/{token}
+  binds:
+    - |
+      slack.identity{ scope: "self" }
+
+# ---- downloads -------------------------------------------------------
+# Private file fetch. The first segment carries `<team_id>-<file_id>`;
+# we capture it whole and split on `-` to feed file_id into
+# `slack.file`. `filename` is the trailing segment, captured for
+# completeness — policies typically gate on the file meta, not the
+# filename.
+- name: download_file
+  method: GET
+  path: /files-pri/{team_file}/{filename}
+  binds:
+    - |
+      slack.file{ file_id: match.team_file.split('-')[1] }
+    - |
+      slack.identity{ scope: "self" }

@@ -1,0 +1,9 @@
+schema_version: 1
+name: bouncer-slack
+version: 0.1.0
+description: |
+  Bouncer API specs for Slack — the Slack Web API at slack.com/api.
+  Install with `bouncer apis add github.com/jkylling/bouncer-slack@<ref>`
+  and the proxy will load every YAML under apis/ automatically.
+apis:
+  - apis/

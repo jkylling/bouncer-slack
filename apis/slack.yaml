@@ -1,0 +1,1058 @@
+---
+# Slack Web API — https://docs.slack.dev/reference/methods
+#
+# The Web API lives at a flat namespace: every method is callable as
+# /api/<method.name> (e.g. /api/chat.postMessage). There are no
+# path-captured IDs — channel, user, ts, etc. ride in the request body.
+# This spec declares each covered method as a POST action and threads
+# the body fields through the bind/binds expressions to construct
+# `conversation`, `user`, and `bot` metas. The optional `?key:` form
+# is used so a missing body field (legacy form-encoded request, or a
+# call that doesn't carry the field) collapses the constructor into a
+# no-op rather than fetching with an empty id.
+#
+# Resources covered:
+#   conversation    (conversations.info)     — channels, DMs, MPIMs, private groups
+#   user            (users.info)             — workspace member
+#   bot             (bots.info)              — bot user identity
+#   file            (files.info)             — uploaded file
+#   team            (team.info)              — workspace scope (per-token, sentinel-keyed)
+#   identity        (auth.test)              — token identity scope (per-token, sentinel-keyed)
+#
+# `team` and `identity` are per-token scope metas. The natural key is
+# the token itself (one workspace + one identity per token), so they
+# carry a single `scope` input fixed to "self" by every binding action.
+# That keeps the schema on documented ground (the input list is
+# non-empty) while preserving the "one fetch per request" cost shape.
+#
+# Action coverage focuses on the practical core: conversations.*,
+# chat.*, users.*, team.*, reactions.*, pins.*, bookmarks.*, files.*,
+# views.*, bots.*, emoji.*, auth.*. Lesser-used surfaces (admin.*,
+# enterprise.*, calls.*, dnd.*, rtm.*, stars.*, oauth.*, …) are
+# intentionally not declared in this v0.1 cut; the proxy will return
+# 404 for them. Add them in a follow-up bundle as needed.
+#
+# Not yet metas (no clean single-id GET): `message` (closest is
+# conversations.history?latest=ts&inclusive=true&limit=1), `usergroup`
+# (only usergroups.list, which fails cost discipline), `view`,
+# `scheduled_message`. Add later if a real gating use case shows up.
+#
+# == Conventions ========================================================
+#
+# - Read methods are declared as POST, matching the modern Slack-SDK
+#   pattern. Operators wanting to gate legacy GET clients should add
+#   parallel actions with `method: GET`.
+# - All meta output fields use Slack's wire field names so policies
+#   can read them directly (e.g. `conversation.is_private`,
+#   `user.profile.email`).
+
+name: slack
+base_url: "https://slack.com"
+path_prefixes:
+- /api
+
+# Slack's Web API returns 200 with `{"ok": false, "error": "..."}` for
+# every application-level error (auth, permission, validation), and
+# every official Slack SDK branches on body.ok before looking at the
+# HTTP status. A 401/403 from the proxy makes the SDK throw a
+# transport-level error before it ever inspects the body, so denials
+# on routes claimed by this API surface as 200 to keep the SDK happy
+# (the body still carries `ok: false` + a message).
+access_denied_status: 200
+
+meta:
+- name: conversation
+  kind: endpoint
+  input:
+  - name: channel_id
+  request: 'post_form("/api/conversations.info", {"channel": input.channel_id})'
+  output:
+  - name: id
+    expr: response.body.?channel.?id
+  - name: name
+    expr: response.body.?channel.?name
+  - name: is_channel
+    expr: response.body.?channel.?is_channel
+  - name: is_group
+    expr: response.body.?channel.?is_group
+  - name: is_im
+    expr: response.body.?channel.?is_im
+  - name: is_mpim
+    expr: response.body.?channel.?is_mpim
+  - name: is_private
+    expr: response.body.?channel.?is_private
+  - name: is_archived
+    expr: response.body.?channel.?is_archived
+  - name: is_general
+    expr: response.body.?channel.?is_general
+  - name: is_shared
+    expr: response.body.?channel.?is_shared
+  - name: is_ext_shared
+    expr: response.body.?channel.?is_ext_shared
+  - name: is_org_shared
+    expr: response.body.?channel.?is_org_shared
+  - name: created
+    expr: response.body.?channel.?created
+  - name: creator
+    expr: response.body.?channel.?creator
+  - name: num_members
+    expr: response.body.?channel.?num_members
+  - name: topic
+    expr: response.body.?channel.?topic
+  - name: purpose
+    expr: response.body.?channel.?purpose
+  # Cross-ref: the channel's creator as a `user`. `?user_id:` makes the
+  # constructor a no-op when `creator` is absent (some channel kinds
+  # don't expose it).
+  - name: creator_user
+    expr: 'user{?user_id: response.body.?channel.?creator}'
+
+- name: user
+  kind: endpoint
+  input:
+  - name: user_id
+  request: 'post_form("/api/users.info", {"user": input.user_id})'
+  output:
+  - name: id
+    expr: response.body.?user.?id
+  - name: team_id
+    expr: response.body.?user.?team_id
+  - name: name
+    expr: response.body.?user.?name
+  - name: real_name
+    expr: response.body.?user.?real_name
+  - name: deleted
+    expr: response.body.?user.?deleted
+  - name: is_admin
+    expr: response.body.?user.?is_admin
+  - name: is_owner
+    expr: response.body.?user.?is_owner
+  - name: is_primary_owner
+    expr: response.body.?user.?is_primary_owner
+  - name: is_restricted
+    expr: response.body.?user.?is_restricted
+  - name: is_ultra_restricted
+    expr: response.body.?user.?is_ultra_restricted
+  - name: is_bot
+    expr: response.body.?user.?is_bot
+  - name: is_app_user
+    expr: response.body.?user.?is_app_user
+  - name: tz
+    expr: response.body.?user.?tz
+  - name: profile
+    expr: response.body.?user.?profile
+  - name: email
+    expr: response.body.?user.?profile.?email
+
+- name: bot
+  kind: endpoint
+  input:
+  - name: bot_id
+  request: 'post_form("/api/bots.info", {"bot": input.bot_id})'
+  output:
+  - name: id
+    expr: response.body.?bot.?id
+  - name: name
+    expr: response.body.?bot.?name
+  - name: app_id
+    expr: response.body.?bot.?app_id
+  - name: deleted
+    expr: response.body.?bot.?deleted
+  - name: user_id
+    expr: response.body.?bot.?user_id
+  # Cross-ref: the workspace user this bot is registered against.
+  - name: user
+    expr: 'user{?user_id: response.body.?bot.?user_id}'
+
+- name: file
+  kind: endpoint
+  input:
+  - name: file_id
+  request: 'post_form("/api/files.info", {"file": input.file_id})'
+  output:
+  - name: id
+    expr: response.body.?file.?id
+  - name: name
+    expr: response.body.?file.?name
+  - name: title
+    expr: response.body.?file.?title
+  - name: mimetype
+    expr: response.body.?file.?mimetype
+  - name: filetype
+    expr: response.body.?file.?filetype
+  - name: size
+    expr: response.body.?file.?size
+  - name: user
+    expr: response.body.?file.?user
+  - name: created
+    expr: response.body.?file.?created
+  - name: is_external
+    expr: response.body.?file.?is_external
+  - name: is_public
+    expr: response.body.?file.?is_public
+  - name: public_url_shared
+    expr: response.body.?file.?public_url_shared
+  - name: url_private
+    expr: response.body.?file.?url_private
+  - name: permalink
+    expr: response.body.?file.?permalink
+  - name: channels
+    expr: response.body.?file.?channels
+  - name: groups
+    expr: response.body.?file.?groups
+  - name: ims
+    expr: response.body.?file.?ims
+  # Cross-ref: the uploader as a `user`.
+  - name: uploader
+    expr: 'user{?user_id: response.body.?file.?user}'
+
+# Per-token workspace scope. team.info returns the workspace metadata.
+# Sentinel-keyed by `scope` (always "self") so all bindings collapse
+# to one fetch per request.
+- name: team
+  kind: endpoint
+  input:
+  - name: scope
+  request: 'post_form("/api/team.info", {})'
+  output:
+  - name: id
+    expr: response.body.?team.?id
+  - name: name
+    expr: response.body.?team.?name
+  - name: domain
+    expr: response.body.?team.?domain
+  - name: email_domain
+    expr: response.body.?team.?email_domain
+  - name: enterprise_id
+    expr: response.body.?team.?enterprise_id
+  - name: enterprise_name
+    expr: response.body.?team.?enterprise_name
+  - name: icon
+    expr: response.body.?team.?icon
+
+# Per-token identity. auth.test reflects who the OAuth token is bound
+# to (workspace + user/bot). Sentinel-keyed; one fetch per request.
+- name: identity
+  kind: endpoint
+  input:
+  - name: scope
+  request: 'post_form("/api/auth.test", {})'
+  output:
+  - name: url
+    expr: response.body.?url
+  - name: team
+    expr: response.body.?team
+  - name: team_id
+    expr: response.body.?team_id
+  - name: user
+    expr: response.body.?user
+  - name: user_id
+    expr: response.body.?user_id
+  - name: bot_id
+    expr: response.body.?bot_id
+  - name: enterprise_id
+    expr: response.body.?enterprise_id
+  - name: is_enterprise_install
+    expr: response.body.?is_enterprise_install
+  # Cross-ref: the calling user, when this is a user token.
+  - name: caller
+    expr: 'user{?user_id: response.body.?user_id}'
+  # Cross-ref: the bot identity, when this is a bot token. `?bot_id:`
+  # makes the constructor a no-op for user tokens.
+  - name: caller_bot
+    expr: 'bot{?bot_id: response.body.?bot_id}'
+
+actions:
+# ---- auth ------------------------------------------------------------
+# auth.test — verify the token. No target.
+- name: test_auth
+  method: POST
+  path: /api/auth.test
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# auth.revoke — invalidate the token. Effectively destructive; gate it.
+- name: revoke_auth
+  method: POST
+  path: /api/auth.revoke
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- conversations ---------------------------------------------------
+# conversations.list — paginated channel directory. No target.
+- name: list_conversations
+  method: POST
+  path: /api/conversations.list
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.info — single-channel read.
+- name: get_conversation
+  method: POST
+  path: /api/conversations.info
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.history — message history within a channel.
+- name: get_conversation_history
+  method: POST
+  path: /api/conversations.history
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.replies — thread replies for a parent message.
+- name: get_conversation_replies
+  method: POST
+  path: /api/conversations.replies
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.members — member list of a channel.
+- name: list_conversation_members
+  method: POST
+  path: /api/conversations.members
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.open — open / resume a DM or MPIM. Members go in `users`
+# (a list, so we can't bind a single `user` meta); when re-opening an
+# existing IM the channel id is in `channel`.
+- name: open_conversation
+  method: POST
+  path: /api/conversations.open
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.close — close a DM or MPIM.
+- name: close_conversation
+  method: POST
+  path: /api/conversations.close
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.create — create a new public or private channel.
+- name: create_conversation
+  method: POST
+  path: /api/conversations.create
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.archive — archive a channel.
+- name: archive_conversation
+  method: POST
+  path: /api/conversations.archive
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.unarchive — unarchive a channel.
+- name: unarchive_conversation
+  method: POST
+  path: /api/conversations.unarchive
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.invite — invite users to a channel.
+- name: invite_to_conversation
+  method: POST
+  path: /api/conversations.invite
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.kick — remove a user from a channel.
+- name: kick_from_conversation
+  method: POST
+  path: /api/conversations.kick
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.leave — current token leaves a channel.
+- name: leave_conversation
+  method: POST
+  path: /api/conversations.leave
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.join — current token joins a channel.
+- name: join_conversation
+  method: POST
+  path: /api/conversations.join
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.rename — rename a channel.
+- name: rename_conversation
+  method: POST
+  path: /api/conversations.rename
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.setPurpose — set a channel's purpose.
+- name: set_conversation_purpose
+  method: POST
+  path: /api/conversations.setPurpose
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.setTopic — set a channel's topic.
+- name: set_conversation_topic
+  method: POST
+  path: /api/conversations.setTopic
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# conversations.mark — set a channel's read cursor.
+- name: mark_conversation
+  method: POST
+  path: /api/conversations.mark
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- chat ------------------------------------------------------------
+# chat.postMessage — post a message.
+- name: post_message
+  method: POST
+  path: /api/chat.postMessage
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.postEphemeral — post a message visible only to one user.
+- name: post_ephemeral
+  method: POST
+  path: /api/chat.postEphemeral
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.update — edit an existing message.
+- name: update_message
+  method: POST
+  path: /api/chat.update
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.delete — delete an existing message.
+- name: delete_message
+  method: POST
+  path: /api/chat.delete
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.meMessage — share a /me-style message.
+- name: post_me_message
+  method: POST
+  path: /api/chat.meMessage
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.getPermalink — resolve a (channel, ts) to a permalink URL.
+- name: get_message_permalink
+  method: POST
+  path: /api/chat.getPermalink
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.scheduleMessage — queue a message for future delivery.
+- name: schedule_message
+  method: POST
+  path: /api/chat.scheduleMessage
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.deleteScheduledMessage — cancel a previously scheduled message.
+- name: delete_scheduled_message
+  method: POST
+  path: /api/chat.deleteScheduledMessage
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# chat.scheduledMessages.list — list pending scheduled messages.
+- name: list_scheduled_messages
+  method: POST
+  path: /api/chat.scheduledMessages.list
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- users -----------------------------------------------------------
+# users.list — paginated workspace member directory.
+- name: list_users
+  method: POST
+  path: /api/users.list
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.info — single-user read.
+- name: get_user
+  method: POST
+  path: /api/users.info
+  binds:
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.lookupByEmail — find a user by their email address.
+- name: lookup_user_by_email
+  method: POST
+  path: /api/users.lookupByEmail
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.getPresence — fetch a user's presence (active / away).
+- name: get_user_presence
+  method: POST
+  path: /api/users.getPresence
+  binds:
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.profile.get — read a user's profile fields.
+- name: get_user_profile
+  method: POST
+  path: /api/users.profile.get
+  binds:
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.profile.set — update a user's profile (admin scope, or self).
+- name: set_user_profile
+  method: POST
+  path: /api/users.profile.set
+  binds:
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.conversations — list the channels a user belongs to.
+- name: list_user_conversations
+  method: POST
+  path: /api/users.conversations
+  binds:
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.setPresence — toggle the current token's own presence.
+- name: set_user_presence
+  method: POST
+  path: /api/users.setPresence
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.deletePhoto — remove the current token's profile photo.
+- name: delete_user_photo
+  method: POST
+  path: /api/users.deletePhoto
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# users.setPhoto — upload a new profile photo for the current token.
+- name: set_user_photo
+  method: POST
+  path: /api/users.setPhoto
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- team ------------------------------------------------------------
+# team.info — workspace metadata.
+- name: get_team
+  method: POST
+  path: /api/team.info
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# team.profile.get — workspace profile field schema.
+- name: get_team_profile
+  method: POST
+  path: /api/team.profile.get
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# team.billableInfo — per-user billing eligibility (admin scope).
+- name: get_team_billable_info
+  method: POST
+  path: /api/team.billableInfo
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- reactions -------------------------------------------------------
+# reactions.add — react to a (channel, ts).
+- name: add_reaction
+  method: POST
+  path: /api/reactions.add
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# reactions.remove — un-react.
+- name: remove_reaction
+  method: POST
+  path: /api/reactions.remove
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# reactions.get — list the reactions on a (channel, ts).
+- name: get_reactions
+  method: POST
+  path: /api/reactions.get
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# reactions.list — list reactions made by a user.
+- name: list_reactions
+  method: POST
+  path: /api/reactions.list
+  binds:
+    - |
+      user{?user_id: request.body.?user}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- pins ------------------------------------------------------------
+# pins.add — pin a message in a channel.
+- name: add_pin
+  method: POST
+  path: /api/pins.add
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# pins.remove — unpin a message.
+- name: remove_pin
+  method: POST
+  path: /api/pins.remove
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# pins.list — list pinned items in a channel.
+- name: list_pins
+  method: POST
+  path: /api/pins.list
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- bookmarks (note: keys channel as `channel_id`, not `channel`) ---
+# bookmarks.list — bookmarks in a channel. Note: keyed by `channel_id`.
+- name: list_bookmarks
+  method: POST
+  path: /api/bookmarks.list
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel_id}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# bookmarks.add — add a bookmark to a channel.
+- name: add_bookmark
+  method: POST
+  path: /api/bookmarks.add
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel_id}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# bookmarks.edit — edit a channel bookmark.
+- name: edit_bookmark
+  method: POST
+  path: /api/bookmarks.edit
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel_id}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# bookmarks.remove — delete a channel bookmark.
+- name: remove_bookmark
+  method: POST
+  path: /api/bookmarks.remove
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel_id}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- files -----------------------------------------------------------
+# files.list — list files in the workspace, optionally per-channel.
+- name: list_files
+  method: POST
+  path: /api/files.list
+  binds:
+    - |
+      conversation{?channel_id: request.body.?channel}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.info — read a file's metadata.
+- name: get_file
+  method: POST
+  path: /api/files.info
+  binds:
+    - |
+      file{?file_id: request.body.?file}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.delete — delete a file.
+- name: delete_file
+  method: POST
+  path: /api/files.delete
+  binds:
+    - |
+      file{?file_id: request.body.?file}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.upload — legacy single-step upload. No file id at request time.
+- name: upload_file
+  method: POST
+  path: /api/files.upload
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.getUploadURLExternal — first half of the modern two-step upload.
+- name: get_file_upload_url_external
+  method: POST
+  path: /api/files.getUploadURLExternal
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.completeUploadExternal — second half of the two-step upload.
+- name: complete_file_upload_external
+  method: POST
+  path: /api/files.completeUploadExternal
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.sharedPublicURL — make a file world-readable.
+- name: share_public_file_url
+  method: POST
+  path: /api/files.sharedPublicURL
+  binds:
+    - |
+      file{?file_id: request.body.?file}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# files.revokePublicURL — revoke an earlier public share.
+- name: revoke_public_file_url
+  method: POST
+  path: /api/files.revokePublicURL
+  binds:
+    - |
+      file{?file_id: request.body.?file}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- emoji -----------------------------------------------------------
+# emoji.list — workspace custom emoji.
+- name: list_emoji
+  method: POST
+  path: /api/emoji.list
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- bots ------------------------------------------------------------
+# bots.info — bot user metadata.
+- name: get_bot
+  method: POST
+  path: /api/bots.info
+  binds:
+    - |
+      bot{?bot_id: request.body.?bot}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# ---- views (modals + Home tab) --------------------------------------
+# views.open — open a modal dialog.
+- name: open_view
+  method: POST
+  path: /api/views.open
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# views.push — push a new view onto a modal stack.
+- name: push_view
+  method: POST
+  path: /api/views.push
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# views.update — replace an existing view.
+- name: update_view
+  method: POST
+  path: /api/views.update
+  binds:
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# views.publish — publish a Home tab for a user. Note: `user_id`, not `user`.
+- name: publish_view
+  method: POST
+  path: /api/views.publish
+  binds:
+    - |
+      user{?user_id: request.body.?user_id}
+    - |
+      team{scope: "self"}
+    - |
+      identity{scope: "self"}
+
+# Documentation-only starter policies. Substitute placeholders before
+# applying. Each suggestion targets a narrow, common-case permit / deny;
+# pair with workspace-wide deny policies as needed.
+#
+# == Substitution placeholders ==========================================
+#
+#   <CHANNEL_ID>      Slack channel/DM/group id (e.g. "C0123456789").
+#   <USER_ID>         Slack user id (e.g. "U0123456789").
+#   <TEAM_ID>         Slack workspace id (e.g. "T0123456789").
+#   <ALLOWED_DOMAIN>  Workspace email domain (e.g. "example.com").
+#
