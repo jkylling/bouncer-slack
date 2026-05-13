@@ -1,0 +1,17 @@
+api: slack
+name: no-dm-conversation-history
+action: action.name == "get_conversation_history"
+condition: conversation.is_im || conversation.is_mpim
+result: deny
+---
+api: slack
+name: no-dm-conversation-replies
+action: action.name == "get_conversation_replies"
+condition: conversation.is_im || conversation.is_mpim
+result: deny
+---
+api: slack
+name: no-dm-get-conversation
+action: action.name == "get_conversation"
+condition: conversation.is_im || conversation.is_mpim
+result: deny

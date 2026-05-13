@@ -1,0 +1,47 @@
+api: slack
+name: read-only-list-conversations
+action: action.name == "list_conversations"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-get-conversation
+action: action.name == "get_conversation"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-get-conversation-history
+action: action.name == "get_conversation_history"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-get-conversation-replies
+action: action.name == "get_conversation_replies"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-list-conversation-members
+action: action.name == "list_conversation_members"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-list-users
+action: action.name == "list_users"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-get-user
+action: action.name == "get_user"
+condition: "true"
+result: permit
+---
+api: slack
+name: read-only-test-auth
+action: action.name == "test_auth"
+condition: "true"
+result: permit
