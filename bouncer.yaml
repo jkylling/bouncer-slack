@@ -8,25 +8,15 @@ description: |
 apis:
   - apis/
 
-# Service block (slug + MCP-staging metadata).
 service:
   slug: slack
   title: Slack
   description: |
-    Slack Web API. Bouncer holds the upstream bot or user token;
-    agents only see a bouncer-issued bearer.
-  prompt: prompts/slack-token.md
-  credential:
-    path: ~/.config/bouncer/slack-token
-    mode: "0600"
-    template: "{{ .AccessToken }}"
-  env:
-    SLACK_TOKEN:     "{{ .AccessToken }}"
-    SLACK_API_TOKEN: "{{ .AccessToken }}"
+    Slack Web API. Issues bouncer-bearer JWTs that wrap your upstream
+    bot/user token (or browser-session cookies).
 
-# Bring-your-own-token variants. Slack has two practical shapes:
-# a regular bot / user token, and (advanced) the browser cookies
-# extracted from an existing Slack session.
+# Bring-your-own-token variants. The tokens screen renders one form
+# per variant and emits a copy-pasteable bouncer JWT.
 token:
   - id: bot_or_user_token
     title: Bot or user token
@@ -43,10 +33,10 @@ token:
   - id: browser_cookies
     title: Browser cookies (advanced)
     description: |
-      Paste the `d` cookie value from an existing Slack browser
-      session, plus your workspace's xoxc token. Useful for
-      interacting with Slack APIs that don't accept regular bot
-      tokens. Re-paste when the session expires.
+      Paste the workspace's xoxc token plus the `d` cookie value from
+      an existing Slack browser session. Useful for interacting with
+      Slack APIs that don't accept regular bot tokens. Re-paste when
+      the session expires.
     fields:
       - name: access_token
         label: xoxc token
@@ -58,24 +48,5 @@ token:
         kind: secret
         help: 'The full value of the "d" cookie from your browser.'
         required: true
-
-# Suggested starter policies. Hand-edited; identifiers are hard-
-# coded so most should work out of the box.
-policies:
-  - id: slack-channels-read-only
-    title: Slack — channels read-only
-    description: |
-      Permit conversations.info, conversations.history,
-      conversations.list, and users.info. No posts, no DMs, no
-      reactions.
-    file: policies/channels-read-only.yaml
-    default_enabled: true
-
-  - id: slack-no-dm
-    title: Slack — block direct messages
-    description: |
-      Deny conversations.* on any channel whose meta reports it as
-      a 1:1 DM. Pair with the channels-read-only policy for a
-      paranoid digest agent.
-    file: policies/no-dm.yaml
-    default_enabled: false
+        header: Cookie
+        template: "d={{.}}"
